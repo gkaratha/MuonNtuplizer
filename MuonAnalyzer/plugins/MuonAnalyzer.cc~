@@ -1,0 +1,792 @@
+// Package:    HLTAnalysis/TriggerAnalyzer
+// Class:      TriggerAnalyzer
+// 
+/**\class TriggerAnalyzer TriggerAnalyzer.cc HLTAnalysis/TriggerAnalyzer/plugins/TriggerAnalyzer.cc
+
+ Description: [one line class summary]
+
+ Implementation:
+     [Notes on implementation]
+*/
+//
+// Original Author:
+//                george karathanasis
+//         Created:  Thu, 23 Mar 2017 17:40:23 GMT
+//
+//
+
+
+// system include files
+#include <memory>
+#include <iostream>
+// user include files
+#include "FWCore/Framework/interface/Frameworkfwd.h"
+#include "FWCore/Framework/interface/one/EDAnalyzer.h"
+
+#include "FWCore/Framework/interface/Event.h"
+#include "DataFormats/Common/interface/Handle.h"
+#include "FWCore/Framework/interface/MakerMacros.h"
+#include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
+#include "FWCore/ParameterSet/interface/ParameterSetDescription.h"
+#include "FWCore/ParameterSet/interface/ParameterSet.h"
+
+#include "DataFormats/PatCandidates/interface/Muon.h"
+#include "DataFormats/PatCandidates/interface/PackedCandidate.h"
+#include "DataFormats/VertexReco/interface/VertexFwd.h"
+#include "DataFormats/VertexReco/interface/Vertex.h"
+
+#include "DataFormats/Common/interface/TriggerResults.h"
+#include "FWCore/Common/interface/TriggerNames.h"
+
+#include "FWCore/ServiceRegistry/interface/Service.h"
+#include "CommonTools/UtilAlgos/interface/TFileService.h"
+
+#include "DataFormats/HLTReco/interface/TriggerEvent.h"
+#include "DataFormats/HLTReco/interface/TriggerObject.h"
+#include "DataFormats/Math/interface/deltaR.h"
+
+#include "HLTrigger/HLTcore/interface/defaultModuleLabel.h"
+#include "FWCore/PluginManager/interface/ModuleDef.h"
+#include "FWCore/ParameterSet/interface/ParameterSet.h"
+
+#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "DataFormats/RecoCandidate/interface/RecoChargedCandidateIsolation.h"
+#include "DataFormats/Common/interface/AssociationMap.h"
+#include "DataFormats/HLTReco/interface/TriggerFilterObjectWithRefs.h"
+#include "DataFormats/HepMCCandidate/interface/GenParticle.h"
+#include "MagneticField/Engine/interface/MagneticField.h"
+#include "MagneticField/ParametrizedEngine/src/OAEParametrizedMagneticField.h"
+#include "TrackingTools/PatternTools/interface/TwoTrackMinimumDistance.h"
+#include "TrackingTools/TransientTrack/interface/TransientTrack.h"
+#include "RecoVertex/KalmanVertexFit/interface/KalmanVertexFitter.h"
+#include <vector>
+#include "TTree.h"
+#include <string>
+#include <iostream>
+#include "TMath.h"
+#include "DataFormats/Common/interface/Ref.h"
+#include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
+#include "TrackingTools/PatternTools/interface/ClosestApproachInRPhi.h"
+#include "DataFormats/L1TGlobal/interface/GlobalAlgBlk.h"
+#include "CommonTools/Statistics/interface/ChiSquaredProbability.h"
+#include "TLorentzVector.h"
+#include "TrackingTools/TransientTrack/interface/TransientTrackBuilder.h"
+#include "TrackingTools/Records/interface/TransientTrackRecord.h"
+#include "DataFormats/PatCandidates/interface/PackedGenParticle.h"
+
+/*namespace edm {
+  class ConfigurationDescriptions;
+  }*/
+
+
+
+using namespace std;
+//using namespace edm;
+
+
+//
+// class declaration
+//
+
+// If the analyzer does not use TFileService, please remove
+// the template argument to the base class so the class inherits
+// from  edm::one::EDAnalyzer<> and also remove the line from
+// constructor "usesResource("TFileService");"
+// This will improve performance in multithreaded jobs.
+template<typename T1>
+class MuonAnalyzer : public edm::one::EDAnalyzer<edm::one::SharedResources>  {
+
+  typedef std::vector<T1> T1Collection;
+  typedef edm::Ref<T1Collection> T1Ref;
+  typedef edm::AssociationMap<edm::OneToValue<std::vector<T1>, float > > T1IsolationMap;
+
+public:
+  explicit MuonAnalyzer(const edm::ParameterSet&);
+  ~MuonAnalyzer();
+  
+  static void fillDescriptions(edm::ConfigurationDescriptions& descriptions);
+  
+  
+private:
+  virtual void beginJob() override;
+  virtual void analyze(const edm::Event&, const edm::EventSetup&) override;
+  virtual void genMu(const edm::Event&, const edm::EventSetup&);
+  virtual void endJob() override;
+ 
+
+  edm::EDGetTokenT<reco::BeamSpot> beamSpotToken_;
+  edm::EDGetTokenT<std::vector<reco::Vertex>> vtxToken_;
+  edm::EDGetToken muonsToken_;
+  edm::EDGetToken l1MuonsToken_;
+  edm::EDGetToken PFCands_;
+  edm::EDGetToken LostTracks_;
+  edm::EDGetToken GenToken_;
+  edm::EDGetTokenT<edm::TriggerResults> trgresultsToken_; 
+  edm::EDGetTokenT<vector<pat::TriggerObjectStandAlone>> trigobjectsToken_;
+  std::vector<std::string> HLTPaths;
+  
+
+ 
+ unsigned int event,run_number,ls,nmuons,ndimuons,ntrkmuons,ntracks;
+ std::vector<float> pvertex_x,pvertex_y,pvertex_z;
+ float beam_x=0,beam_y=0,beam_z=0;
+
+//gen
+ std::vector<float> genmuon_pt,genmuon_eta,genmuon_phi,genmuon_charge,genmuon_momId,genmuon_grandmomId,genmuon_grandgrandmomId;
+//trg
+ std::vector<bool> hltpaths;
+ std::vector<float> l1muon_pt,l1muon_eta,l1muon_phi,hltmuon_pt,hltmuon_eta,hltmuon_phi;
+ std::vector<unsigned int> hltmuon_pathId;
+ unsigned int hlt_firedMuindex;
+ float hlt_firedMuDr;
+ //muon
+ std::vector<bool> muon_soft,muon_medium,muon_loose,muon_tight,muon_highpt,muon_globalMu,muon_trackerMu;
+  std::vector<float> muon_pt,muon_eta,muon_phi,muon_charge,muon_vx,muon_vy,
+  muon_vz,muon_iso,muon_dxy,muon_edxy,muon_dz,muon_edz,muon_norm_chi2,
+  muon_dytpt,muon_innerpt,muon_globalpt,muon_tunePpt,muon_pickypt,muon_mva,
+  muon_dyt_norm_chi2,muon_inner_norm_chi2,muon_global_norm_chi2,
+  muon_tuneP_norm_chi2,muon_pickychi_norm_chi2,
+  muon_soft_mva,muon_tmpfms_pt,muon_tmpfms_chi,muon_sta_pt,muon_sta_chi,
+  muon_track_iso,muon_hcaliso,muon_ecaliso,muon_chambers,muon_chambers_dtcsc,
+  muon_tmpfms_ptError,muon_sta_ptError,muon_dytptError,muon_innerptError,
+  muon_globalptError,muon_tunePptError,muon_pickyptError,muon_validh,muon_validh_tune,
+  muon_matched_st,muon_expd_matches_st,muon_st_mask,muon_rpc_layers,muon_dB,
+  muon_pxlhits,muon_trklayers;
+ std::vector<std::string> muon_algo;
+
+ //jpsi
+ //
+ std::vector<float> dimuon_pt,dimuon_eta,dimuon_phi,dimuon_ctxy,dimuon_x,dimuon_y,dimuon_z,dimuon_prob,dimuon_mass,dimuon_mass_unfit,dimuon_mu1pt,dimuon_mu1eta,dimuon_mu1phi,dimuon_mu2pt,dimuon_mu2eta,dimuon_mu2phi,dimuon_cos2D,dimuon_lxy,dimuon_elxy;
+ std::vector<unsigned int> dimuon_mu1id,dimuon_mu2id;
+ //tracks
+  std::vector<float> track_pt,track_phi,track_eta,track_charge,track_vx,track_vy,track_vz,track_dxy,track_edxy,track_dz,track_edz,track_trklayers,track_pxllayers,track_normchi2;
+ //trkmu
+ std::vector<float> trkmuon_pt,trkmuon_eta,trkmuon_phi,trkmuon_ctxy,trkmuon_x,trkmuon_y,trkmuon_z,trkmuon_prob,trkmuon_mass,trkmuon_mass_unfit,trkmuon_mupt,trkmuon_mueta,trkmuon_muphi,trkmuon_trkpt,trkmuon_trketa,trkmuon_trkphi,trkmuon_cos2D,trkmuon_lxy,trkmuon_elxy;
+ std::vector<unsigned int> trkmuon_muid,trkmuon_trkid;
+ //  edm::ParameterSet const& conf;
+ 
+
+  edm::Service<TFileService> fs;
+  TTree * t1;
+  bool MuMuVtx=false; bool MuTrkVtx=false; bool SaveTrk=true;
+  bool data=true; bool SkipEvtWithNoFire=false; double minMuPtCut=0;
+  double minDiMuPtCut=0; double McutMin=0; double McutMax=100;
+  double minMuTrkPtCut=0;
+  double DzMuTrk=100; double TrkPtCut=-1; double DzMuMu=-1; double DzTrkTrg=-1;
+  bool SkipEvtNoHLTmuMatch=false; double maxDrMuMatch=-1;
+  bool SkipEvtNoMuVtx=false; bool SkipEvtNoTrkVtx=false;
+  bool UseOnlyTrgForTrkMu=false; double HighPtThr=0; bool SkipEvtNoHighPt=false;
+  
+    // ----------member data ---------------------------
+};
+
+//
+// constants, enums and typedefs
+//
+
+//
+// static data member definitions
+//
+
+//
+// constructors and destructor
+//
+template<typename T1>
+MuonAnalyzer<T1>::MuonAnalyzer(const edm::ParameterSet& iConfig): 
+ beamSpotToken_(consumes<reco::BeamSpot>(iConfig.getParameter <edm::InputTag>("beamSpot"))),
+ vtxToken_(consumes<std::vector<reco::Vertex>>(iConfig.getParameter<edm::InputTag>("vertices"))),
+ muonsToken_(consumes<std::vector<pat::Muon>>(iConfig.getParameter<edm::InputTag>("muons"))),
+  l1MuonsToken_(consumes<l1t::MuonBxCollection>(iConfig.getParameter<edm::InputTag>("l1muons"))),
+  PFCands_(consumes<std::vector<pat::PackedCandidate> >(iConfig.getParameter<edm::InputTag>("PFCands"))),
+ LostTracks_(consumes<std::vector<pat::PackedCandidate> >(iConfig.getParameter<edm::InputTag>("losttracks"))),
+GenToken_(consumes<std::vector<pat::PackedGenParticle> >(iConfig.getParameter<edm::InputTag>("genmuons"))),
+trgresultsToken_(consumes<edm::TriggerResults >(iConfig.getParameter<edm::InputTag>("triggerresults"))),
+ trigobjectsToken_(consumes<vector<pat::TriggerObjectStandAlone>>(iConfig.getParameter<edm::InputTag> ("triggerobjects"))),
+ HLTPaths(iConfig.getParameter<std::vector<std::string>>("HLTPaths"))
+{
+  edm::ParameterSet runParameters=iConfig.getParameter<edm::ParameterSet>("RunParameters");
+ data=runParameters.getParameter<bool>("Data");
+ SaveTrk=runParameters.getParameter<bool>("SaveTracks");
+ SkipEvtWithNoFire=runParameters.getParameter<bool>("SkipEvtWithNoFire");
+ SkipEvtNoMuVtx=runParameters.getParameter<bool>("SkipEvtNoMuVtx");
+ SkipEvtNoTrkVtx=runParameters.getParameter<bool>("SkipEvtNoTrkVtx");
+ SkipEvtNoHLTmuMatch=runParameters.getParameter<bool>("SkipEvtNoHLTmuMatch");
+ maxDrMuMatch=runParameters.getParameter<double>("maxDrMuMatch");
+ minMuPtCut=runParameters.getParameter<double>("minMuPtCut");
+ minDiMuPtCut=runParameters.getParameter<double>("minDiMuPtCut");
+ McutMin=runParameters.getParameter<double>("McutMin");
+ McutMax=runParameters.getParameter<double>("McutMax");
+ DzMuTrk=runParameters.getParameter<double>("DzMuTrk");
+ DzMuMu=runParameters.getParameter<double>("DzMuMu");
+ DzTrkTrg=runParameters.getParameter<double>("DzTrkTrg");
+ TrkPtCut=runParameters.getParameter<double>("minTrkPtCut");
+ minMuTrkPtCut=runParameters.getParameter<double>("minMuTrkPtCut");
+ MuMuVtx=runParameters.getParameter<bool>("MuMuVtx");
+ MuTrkVtx=runParameters.getParameter<bool>("MuTrkVtx");
+ UseOnlyTrgForTrkMu=runParameters.getParameter<bool>("UseOnlyTrgForTrkMu");
+ HighPtThr=runParameters.getParameter<double>("HighPtThr");
+ SkipEvtNoHighPt=runParameters.getParameter<bool>("SkipEvtNoHighPt");
+}
+
+template<typename T1>
+MuonAnalyzer<T1>::~MuonAnalyzer()
+{
+  // cout<<"total "<<trg_counter<<" fires "<<fire_counter<<" l3 "<<l3_counter<<endl;
+   // do anything here that needs to be done at desctruction time
+
+}
+
+
+//
+// member functions
+//
+
+// ------------ method called for each event  ------------
+
+template<typename T1>
+void MuonAnalyzer<T1>::genMu(const edm::Event& iEvent, const edm::EventSetup& iSetup){
+  edm::Handle<std::vector<pat::PackedGenParticle>> packed;
+  iEvent.getByToken(GenToken_,packed);
+  
+  for ( const pat::PackedGenParticle  & gen: *packed){
+    if (gen.pdgId()!=13 && gen.pdgId()!=-13) continue;
+    genmuon_pt.push_back(gen.pt()); genmuon_eta.push_back(gen.eta());
+    genmuon_phi.push_back(gen.phi()); genmuon_charge.push_back(gen.charge());
+    const reco::Candidate * motherInPrunedCollection =gen.mother(0);
+    if (motherInPrunedCollection!=NULL){
+      genmuon_momId.push_back(motherInPrunedCollection->pdgId());
+      if (motherInPrunedCollection->numberOfMothers()>0){
+        genmuon_grandmomId.push_back(motherInPrunedCollection->mother()->pdgId());
+        if (motherInPrunedCollection->mother()->numberOfMothers()>0)
+          genmuon_grandgrandmomId.push_back(motherInPrunedCollection->mother()->mother()->pdgId());
+        else
+         genmuon_grandgrandmomId.push_back(-999);
+       }
+      else{
+        genmuon_grandmomId.push_back(-999); genmuon_grandgrandmomId.push_back(-999);
+       }
+
+    }
+  }
+}
+
+
+  
+template<typename T1>
+void
+MuonAnalyzer<T1>::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
+{
+  using namespace std;
+  using namespace edm;
+  using namespace reco;
+  using namespace trigger;
+  //clean vectors
+  //gen
+  genmuon_pt.clear(),genmuon_eta.clear(),genmuon_phi.clear(),genmuon_charge.clear(),genmuon_momId.clear(),genmuon_grandmomId.clear(),genmuon_grandgrandmomId.clear();;
+ //trg
+ l1muon_pt.clear(),l1muon_eta.clear(),l1muon_phi.clear();
+ hltmuon_pt.clear(),hltmuon_eta.clear(),hltmuon_phi.clear(),hltmuon_pathId.clear();
+ hltpaths.clear();
+ //reco muon
+ muon_soft.clear(),muon_medium.clear(),muon_loose.clear(),muon_tight.clear();
+ muon_highpt.clear(); 
+ muon_pt.clear(),muon_eta.clear(),muon_phi.clear(),muon_charge.clear();
+ muon_vx.clear(),muon_vy.clear(),muon_vz.clear(),muon_iso.clear();
+ muon_dxy.clear(); muon_edxy.clear(); muon_dz.clear(); muon_edz.clear();
+ muon_norm_chi2.clear(); muon_dytpt.clear(); muon_innerpt.clear(); 
+ muon_globalpt.clear(); muon_tunePpt.clear(); muon_pickypt.clear(); 
+ muon_mva.clear(); muon_dyt_norm_chi2.clear(); muon_inner_norm_chi2.clear(); 
+ muon_global_norm_chi2.clear(); muon_tuneP_norm_chi2.clear(); 
+ muon_pickychi_norm_chi2.clear(); muon_soft_mva.clear(); muon_tmpfms_pt.clear();
+ muon_tmpfms_chi.clear(); muon_sta_pt.clear(); muon_sta_chi.clear();
+ muon_track_iso.clear(); muon_hcaliso.clear(); muon_ecaliso.clear();
+ muon_chambers.clear(); muon_chambers_dtcsc.clear();
+ muon_tmpfms_ptError.clear(); muon_sta_ptError.clear(); muon_dytptError.clear();
+ muon_innerptError.clear(); muon_globalptError.clear(); muon_tunePptError.clear();
+ muon_pickyptError.clear(); muon_algo.clear(); muon_validh.clear(); 
+ muon_validh_tune.clear(); muon_matched_st.clear(); 
+ muon_expd_matches_st.clear(); muon_st_mask.clear(); muon_rpc_layers.clear();
+ muon_dB.clear(); muon_pxlhits.clear(); muon_trklayers.clear();
+ muon_globalMu.clear(); muon_trackerMu.clear();
+ //track
+ track_pt.clear(); track_phi.clear(); track_eta.clear(); track_charge.clear(); 
+ track_vx.clear(); track_vy.clear(); track_vz.clear(); track_dxy.clear(); 
+ track_edxy.clear(); track_dz.clear(); track_edz.clear(); track_trklayers.clear();
+ track_pxllayers.clear(); track_normchi2.clear();
+ //dimu
+ dimuon_pt.clear(),dimuon_eta.clear(),dimuon_phi.clear(),dimuon_ctxy.clear();
+ dimuon_x.clear(),dimuon_y.clear(),dimuon_z.clear(),dimuon_prob.clear(),dimuon_mass.clear();
+ dimuon_mass_unfit.clear(),dimuon_mu1pt.clear(),dimuon_mu1eta.clear(),dimuon_mu1phi.clear();
+ dimuon_mu2pt.clear(),dimuon_mu2eta.clear(),dimuon_mu2phi.clear();
+ dimuon_cos2D.clear(); dimuon_lxy.clear(); dimuon_elxy.clear();
+ dimuon_mu1id.clear(); dimuon_mu2id.clear();
+//trkmu
+ trkmuon_pt.clear(),trkmuon_eta.clear(),trkmuon_phi.clear(),trkmuon_ctxy.clear();
+ trkmuon_x.clear(),trkmuon_y.clear(),trkmuon_z.clear(),trkmuon_prob.clear(),trkmuon_mass.clear();
+ trkmuon_mass_unfit.clear(),trkmuon_mupt.clear(),trkmuon_mueta.clear(),trkmuon_muphi.clear();
+ trkmuon_trkpt.clear(),trkmuon_trketa.clear(),trkmuon_trkphi.clear();
+ trkmuon_cos2D.clear(); trkmuon_lxy.clear(); trkmuon_elxy.clear();
+ trkmuon_muid.clear(); trkmuon_trkid.clear();
+ //vtxs
+ pvertex_x.clear(); pvertex_y.clear(); pvertex_z.clear();
+ //zero
+ ndimuons=0; ntrkmuons=0; ntracks=0; nmuons=0;
+ //Get data
+  edm::Handle<reco::BeamSpot> theBeamSpot;
+  iEvent.getByToken(beamSpotToken_,theBeamSpot); 
+  edm::Handle<reco::VertexCollection> vertices;
+  iEvent.getByToken(vtxToken_, vertices);
+  //continue if there are no vertices
+  if (vertices->size()==0) return;
+  edm::Handle<std::vector<pat::Muon>> muons;
+  iEvent.getByToken(muonsToken_,muons);
+  edm::Handle<std::vector<pat::PackedCandidate>> tracks1;
+  iEvent.getByToken(PFCands_,tracks1);
+  edm::Handle<std::vector<pat::PackedCandidate>> tracks2;
+  iEvent.getByToken(LostTracks_,tracks2);
+  edm::ESHandle<MagneticField> bFieldHandle;
+  iSetup.get<IdealMagneticFieldRecord>().get(bFieldHandle);
+  edm::Handle<l1t::MuonBxCollection> l1Muons;
+  iEvent.getByToken(l1MuonsToken_,l1Muons);
+  edm::Handle<vector<pat::TriggerObjectStandAlone>> triggerObjects;
+  iEvent.getByToken(trigobjectsToken_ ,triggerObjects);
+  edm::Handle<edm::TriggerResults> trigResults;
+  iEvent.getByToken(trgresultsToken_, trigResults);
+  edm::TriggerNames trigName;
+  trigName = iEvent.triggerNames(*trigResults);
+
+  event++;
+  //run stuff
+  run_number=iEvent.id().run(); ls=iEvent.luminosityBlock();  
+  beam_x= theBeamSpot->x0(); beam_y= theBeamSpot->y0();
+  beam_z= theBeamSpot->z0();
+  reco::TrackBase::Point  vertex_point; 
+ const  reco::Vertex firstGoodVertex=vertices->front();
+ for (const reco::Vertex &vtx : *vertices) {
+   bool isFake = vtx.isFake();
+   if ( isFake || !vtx.isValid () ) continue;
+   pvertex_x.push_back(vtx.x()); 
+   pvertex_y.push_back(vtx.y()); 
+   pvertex_z.push_back(vtx.z());
+ }
+ if (pvertex_x.size()==0) return;
+ vertex_point.SetCoordinates(pvertex_x[0],pvertex_y[0],pvertex_z[0]);
+ for(typename std::vector< l1t::Muon >::const_iterator mu=l1Muons->begin(0); mu !=l1Muons->end(0); mu++){
+    l1muon_pt.push_back(mu->et()); l1muon_eta.push_back(mu->eta());
+    l1muon_phi.push_back(mu->phi());
+  }
+  if( trigResults.failedToGet() ){
+    if (SkipEvtWithNoFire) return;
+    for (unsigned int trg=0; trg<HLTPaths.size(); trg++)
+       hltpaths.push_back(false);
+  }
+ int N_Triggers = trigResults->size();
+ bool EvtFire=false;
+ for (unsigned int itrg=0; itrg<HLTPaths.size(); itrg++){
+   bool fire=false;
+   for( int i_Trig = 0; i_Trig < N_Triggers; ++i_Trig ) {
+     TString TrigPath =trigName.triggerName(i_Trig);
+     if (!trigResults->accept(i_Trig)) continue;
+     if (TrigPath.Contains(HLTPaths[itrg])){
+        fire=true; EvtFire=true;
+     }
+  }
+  hltpaths.push_back(fire);
+ }
+ if (!EvtFire && SkipEvtWithNoFire) return;
+ if (!data)  genMu(iEvent, iSetup);
+ for (unsigned int ihlt=0; ihlt<HLTPaths.size(); ++ihlt){
+  for(pat::TriggerObjectStandAlone itrg :*triggerObjects){
+    if(!itrg.id(83)) continue;
+    itrg.unpackPathNames(trigName);
+    std::vector<std::string> const& pathnames = itrg.pathNames();
+    bool save=false;
+    for(unsigned int ipath=0; ipath<pathnames.size(); ++ipath){
+     if (pathnames[ipath].find(HLTPaths[ihlt])) save=true;
+    }
+    if (!save) continue;    
+    hltmuon_pt.push_back(itrg.pt());
+    hltmuon_eta.push_back(itrg.eta());
+    hltmuon_phi.push_back(itrg.phi());
+    hltmuon_pathId.push_back(ihlt);
+  }      
+ }
+  float etamax=0,phimax=0,maxhlt=0;
+  for (unsigned int ihlt=0; ihlt<hltmuon_pt.size(); ihlt++){
+    if (hltmuon_pt[ihlt]<maxhlt) continue;
+    maxhlt=hltmuon_pt[ihlt]; etamax=hltmuon_eta[ihlt]; phimax=hltmuon_phi[ihlt];
+  }
+     
+ std::vector<pat::Muon> dimucands; pat::Muon trgmu;
+ std::vector<unsigned int> dimuindex;
+ float minDR=100; hlt_firedMuindex=999;  hlt_firedMuDr=999;
+ bool foundMu=false;
+ for (const pat::Muon &mu : *muons){    
+    muon_pt.push_back(mu.pt()); muon_phi.push_back(mu.phi());
+    muon_eta.push_back(mu.eta()); muon_charge.push_back(mu.charge());    
+    muon_vx.push_back(mu.vx()); muon_vy.push_back(mu.vy());
+    muon_vz.push_back(mu.vz()); muon_medium.push_back(mu.isMediumMuon());
+    muon_loose.push_back(mu.isLooseMuon());
+    muon_tight.push_back(mu.isTightMuon(firstGoodVertex));
+    muon_soft.push_back(mu.isSoftMuon(firstGoodVertex));
+    muon_highpt.push_back(mu.isHighPtMuon(firstGoodVertex));
+    const MuonPFIsolation&  isol=mu.pfIsolationR04();
+    muon_iso.push_back((isol.sumChargedHadronPt+max(0.,isol.sumNeutralHadronEt+isol.sumPhotonEt-0.5*isol.sumPUPt))/mu.pt());   
+    if (mu.innerTrack().isNonnull()){
+      muon_dxy.push_back(mu.innerTrack()->dxy(vertex_point));
+      muon_dz.push_back(mu.innerTrack()->dz(vertex_point));
+      muon_pxlhits.push_back(mu.innerTrack()->hitPattern().numberOfValidPixelHits());
+      muon_trklayers.push_back(mu.innerTrack()->hitPattern().trackerLayersWithMeasurement());
+    }else{
+      muon_dxy.push_back(mu.bestTrack()->dxy(vertex_point));
+      muon_dz.push_back(mu.bestTrack()->dz(vertex_point));
+      muon_pxlhits.push_back(mu.bestTrack()->hitPattern().numberOfValidPixelHits());
+      muon_trklayers.push_back(mu.bestTrack()->hitPattern().trackerLayersWithMeasurement());
+    }
+    muon_edxy.push_back(mu.dxyError());
+    muon_edz.push_back(mu.dzError());    
+    muon_norm_chi2.push_back(mu.bestTrack()->normalizedChi2());
+    /*if (mu.dytTrack().isNonnull()){
+      muon_dytpt.emplace_back(mu.dytTrack()->pt()); 
+      muon_dyt_norm_chi2.emplace_back(mu.dytTrack()->normalizedChi2());
+      muon_dytptError.emplace_back(mu.dytTrack()->ptError());
+    }else{
+      muon_dytpt.push_back(-1); muon_dyt_norm_chi2.push_back(-1);
+      muon_dytptError.push_back(-1);
+      }*/
+    if (mu.innerTrack().isNonnull()){
+      muon_innerpt.emplace_back(mu.innerTrack()->pt()); 
+      muon_inner_norm_chi2.emplace_back(mu.innerTrack()->normalizedChi2());
+      muon_innerptError.emplace_back(mu.innerTrack()->ptError());
+    } else{
+      muon_innerpt.push_back(-1); muon_inner_norm_chi2.push_back(-1);
+      muon_innerptError.push_back(-1);
+      }
+    if (mu.globalTrack().isNonnull()){
+      muon_globalpt.push_back(mu.globalTrack()->pt()); 
+      muon_global_norm_chi2.push_back(mu.globalTrack()->normalizedChi2()); 
+      muon_globalptError.push_back(mu.globalTrack()->ptError());
+      muon_validh.push_back(mu.globalTrack()->hitPattern().numberOfValidMuonHits());
+    } else{
+      muon_globalpt.push_back(-1); muon_global_norm_chi2.push_back(-1); 
+      muon_globalptError.push_back(-1); muon_validh.push_back(-1);
+    }
+    if (mu.tunePMuonBestTrack().isNonnull()){
+      muon_tunePpt.push_back(mu.tunePMuonBestTrack()->pt());
+      muon_tuneP_norm_chi2.push_back(mu.tunePMuonBestTrack()->normalizedChi2());
+      muon_tunePptError.push_back(mu.tunePMuonBestTrack()->ptError());
+      muon_validh_tune.push_back(mu.tunePMuonBestTrack()->hitPattern().numberOfValidMuonHits());
+      if (mu.tunePMuonBestTrack()->pt()>HighPtThr) foundMu=true;
+    }
+    /*if (mu.pickyTrack().isNonnull()){ 
+      muon_pickypt.push_back(mu.pickyTrack()->pt());
+      muon_pickychi_norm_chi2.push_back(mu.pickyTrack()->normalizedChi2());
+      muon_pickyptError.push_back(mu.pickyTrack()->ptError());
+    } else{
+      muon_pickypt.push_back(-1); muon_pickychi_norm_chi2.push_back(-1);
+      muon_pickyptError.push_back(-1);
+      }*/
+    /*if (mu.tpfmsTrack().isNonnull()){
+      muon_tmpfms_pt.push_back(mu.tpfmsTrack()->pt());
+      muon_tmpfms_chi.push_back(mu.tpfmsTrack()->normalizedChi2());
+      muon_tmpfms_ptError.push_back(mu.tpfmsTrack()->ptError());
+    }else{
+      muon_tmpfms_pt.push_back(-1); muon_tmpfms_chi.push_back(-1);
+      muon_tmpfms_ptError.push_back(-1);
+      }*/
+     if (mu.standAloneMuon().isNonnull()){
+      muon_sta_pt.push_back(mu.standAloneMuon()->pt());
+      muon_sta_ptError.push_back(mu.standAloneMuon()->ptError());
+      muon_sta_chi.push_back(mu.standAloneMuon()->normalizedChi2());
+    } else {
+      muon_sta_pt.push_back(-1); muon_sta_ptError.push_back(-1);
+      muon_sta_chi.push_back(-1);
+    }
+    muon_mva.push_back(mu.mvaValue()); 
+    muon_soft_mva.push_back(mu.softMvaValue());
+    muon_track_iso.push_back(mu.trackIso());
+    muon_hcaliso.push_back(mu.hcalIso());
+    muon_ecaliso.push_back(mu.ecalIso());
+    muon_chambers.push_back(mu.numberOfChambers());
+    muon_chambers_dtcsc.push_back(mu.numberOfChambersCSCorDT());
+    muon_globalMu.push_back(mu.isGlobalMuon());
+    muon_matched_st.push_back(mu.numberOfMatchedStations());
+    muon_trackerMu.push_back(mu.isTrackerMuon());  
+    muon_expd_matches_st.push_back(mu.expectedNnumberOfMatchedStations());
+    muon_st_mask.push_back(mu.stationMask());
+    muon_rpc_layers.push_back(mu.numberOfMatchedRPCLayers());
+    muon_dB.push_back(mu.dB());  
+    muon_algo.push_back(mu.tunePMuonBestTrack()->algoName());
+
+    if(mu.pt()>minMuPtCut ){
+      dimucands.push_back(mu); dimuindex.push_back(nmuons);
+    }
+    if (minDR>deltaR(mu.eta(),mu.phi(),etamax,phimax)){ 
+      minDR=deltaR(mu.eta(),mu.phi(),etamax,phimax); trgmu=mu; hlt_firedMuindex=nmuons;
+      hlt_firedMuDr=minDR;
+    }
+    nmuons++;
+  }
+
+ if (SkipEvtNoHighPt && !foundMu) return;
+
+ if (SkipEvtNoHLTmuMatch && minDR>maxDrMuMatch && maxDrMuMatch>0) return;
+ 
+ std::vector<pat::PackedCandidate> tracks;
+if (SaveTrk){
+ for (const pat::PackedCandidate & trk: *tracks1){
+  if (trk.charge()==0) continue;
+  if (!trk.trackHighPurity()) continue;
+  if (!trk.hasTrackDetails()) continue;
+  tracks.emplace_back(trk);
+ }
+ for (const pat::PackedCandidate & trk: *tracks2){
+  if (trk.charge()==0) continue;
+  if (!trk.hasTrackDetails()) continue;
+  tracks.emplace_back(trk);
+ }
+} 
+ std::vector<pat::PackedCandidate> trkcands;
+ std::vector<unsigned int> trkindex;
+ for (const pat::PackedCandidate &trk : tracks){    
+   if (fabs(trk.eta())>2.5) continue;
+   reco::Track ptrk=trk.pseudoTrack();
+   if (ptrk.pt()<TrkPtCut) continue;
+   if(SkipEvtNoHLTmuMatch && fabs(trk.vz()-trgmu.vz())>DzTrkTrg && DzTrkTrg>0)
+     continue;
+   track_pt.push_back(ptrk.pt()); track_phi.push_back(ptrk.phi());
+   track_eta.push_back(ptrk.eta()); track_charge.push_back(trk.charge());    
+   track_vx.push_back(trk.vx()); track_vy.push_back(trk.vy());
+   track_vz.push_back(trk.vz()); 
+   track_dxy.push_back(ptrk.dxy(vertex_point));
+   track_dz.push_back(ptrk.dz(vertex_point));
+   track_edxy.push_back(trk.dxyError());
+   track_edz.push_back(trk.dzError()); 
+   track_trklayers.push_back(ptrk.hitPattern().trackerLayersWithMeasurement());
+   track_pxllayers.push_back(ptrk.hitPattern().pixelLayersWithMeasurement());
+   track_normchi2.emplace_back(ptrk.normalizedChi2());
+   if( ( SkipEvtNoHLTmuMatch && fabs(trk.vz()-trgmu.vz())<DzTrkTrg && DzTrkTrg>0) || (!SkipEvtNoHLTmuMatch) ){
+     trkcands.push_back(trk);  trkindex.push_back(ntracks);
+   }
+   ntracks++;
+  }  
+   
+ if (MuMuVtx){  
+  for (std::vector<pat::Muon>::iterator mu1=dimucands.begin(); mu1!=dimucands.end(); ++mu1){
+   for (std::vector<pat::Muon>::iterator mu2=mu1+1; mu2!=dimucands.end(); ++mu2){
+      if (mu1->charge()==mu2->charge()) continue;
+      if ( fabs(mu1->vz()-mu2->vz())>DzMuMu && DzMuMu>0 ) continue;
+      TLorentzVector vmu1,vmu2; 
+      vmu1.SetPtEtaPhiM(mu1->pt(),mu1->eta(),mu1->phi(),0.105);
+      vmu2.SetPtEtaPhiM(mu2->pt(),mu2->eta(),mu2->phi(),0.105);
+      if ( (vmu1+vmu2).M()<McutMin || (vmu1+vmu2).M()>McutMax) continue;
+      dimuon_mass_unfit.push_back((vmu1+vmu2).M());
+      std::vector<reco::TransientTrack> dimutrk; dimutrk.reserve(2);
+      dimutrk.emplace_back(reco::TransientTrack(*(mu1->bestTrack()),&(*bFieldHandle)));
+      dimutrk.emplace_back(reco::TransientTrack(*(mu2->bestTrack()),&(*bFieldHandle)));
+      KalmanVertexFitter vtxFitter(true);
+      TransientVertex dimuvtx=vtxFitter.vertex(dimutrk);
+      if(!dimuvtx.isValid()) continue; 
+      dimuon_x.push_back(dimuvtx.position().x());
+      dimuon_y.push_back(dimuvtx.position().y());
+      dimuon_z.push_back(dimuvtx.position().z());
+      dimuon_prob.push_back(ChiSquaredProbability(dimuvtx.totalChiSquared(), dimuvtx.degreesOfFreedom()));
+      std::vector<reco::TransientTrack> refited=dimuvtx.refittedTracks();
+      vmu1.SetPtEtaPhiM(refited[0].track().pt(),refited[0].track().eta(),refited[0].track().phi(),0.105);
+      vmu2.SetPtEtaPhiM(refited[1].track().pt(),refited[1].track().eta(),refited[1].track().phi(),0.105);
+      dimuon_mu1pt.push_back(vmu1.Pt()); dimuon_mu1eta.push_back(vmu1.Eta());
+      dimuon_mu1phi.push_back(vmu1.Phi()); dimuon_mu2pt.push_back(vmu2.Pt()); 
+      dimuon_mu2eta.push_back(vmu2.Eta()); dimuon_mu2phi.push_back(vmu2.Phi());
+      dimuon_pt.push_back((vmu1+vmu2).Pt()); dimuon_eta.push_back((vmu1+vmu2).Eta());
+      dimuon_phi.push_back((vmu1+vmu2).Phi()); dimuon_mass.push_back((vmu1+vmu2).M());
+      GlobalPoint Dispbeamspot(-1*((beam_x-dimuvtx.position().x())+(dimuvtx.position().z()-beam_z)* theBeamSpot->dxdz()),-1*((beam_y-dimuvtx.position().y())+ (dimuvtx.position().z()-beam_z) * theBeamSpot->dydz()), 0);
+      math::XYZVector vperp(Dispbeamspot.x(),Dispbeamspot.y(),0.);
+      math::XYZVector pperp(dimuvtx.position().x(),dimuvtx.position().y(),0);
+      float cos(vperp.Dot(pperp)/(vperp.R()*pperp.R()));
+      dimuon_cos2D.push_back(cos);
+      dimuon_lxy.push_back(Dispbeamspot.perp());
+      dimuon_elxy.push_back(TMath::Sqrt(dimuvtx.positionError().rerr(Dispbeamspot)));
+//      cout<<std::distance(dimucands.begin(),mu1)<<endl;
+      dimuon_mu1id.push_back(dimuindex[std::distance(dimucands.begin(),mu1)]);
+      dimuon_mu2id.push_back(dimuindex[std::distance(dimucands.begin(),mu2)]);
+      ndimuons++;
+   
+  }
+ }
+}
+ if (MuMuVtx && SkipEvtNoMuVtx && !MuTrkVtx && dimuon_pt.size()==0) return;
+ if (UseOnlyTrgForTrkMu && SkipEvtNoHLTmuMatch) {
+   dimucands.clear(); dimuindex.clear();
+   dimucands.push_back(trgmu); dimuindex.push_back(hlt_firedMuindex);
+ }
+ if (MuTrkVtx){
+  for (std::vector<pat::Muon>::iterator mu1=dimucands.begin(); mu1!=dimucands.end(); ++mu1){
+   for (std::vector<pat::PackedCandidate>::iterator trk=trkcands.begin(); trk!=trkcands.end(); ++trk){ 
+    if(mu1->charge()==trk->charge()) continue;
+    if ( fabs(mu1->vz()-trk->vz())>DzMuTrk && DzMuTrk>0 ) continue;
+    TLorentzVector vmu1,vmu2; 
+    vmu1.SetPtEtaPhiM(mu1->pt(),mu1->eta(),mu1->phi(),0.105);
+    vmu2.SetPtEtaPhiM(trk->pseudoTrack().pt(),trk->pseudoTrack().eta(),trk->pseudoTrack().phi(),0.105);
+    if ( (vmu1+vmu2).M()<McutMin || (vmu1+vmu2).M()>McutMax) continue;
+    std::vector<reco::TransientTrack> trkmutrk; trkmutrk.reserve(2);
+    trkmutrk.emplace_back(reco::TransientTrack(*(mu1->bestTrack()),&(*bFieldHandle)));
+    trkmutrk.emplace_back(reco::TransientTrack(trk->pseudoTrack(),&(*bFieldHandle)));
+    KalmanVertexFitter vtxFitter(true);
+    TransientVertex trkmuvtx=vtxFitter.vertex(trkmutrk);
+    if(!trkmuvtx.isValid()) continue; 
+    trkmuon_mass_unfit.push_back((vmu1+vmu2).M());
+    trkmuon_x.push_back(trkmuvtx.position().x());
+    trkmuon_y.push_back(trkmuvtx.position().y());
+    trkmuon_z.push_back(trkmuvtx.position().z());
+    trkmuon_prob.push_back(ChiSquaredProbability(trkmuvtx.totalChiSquared(), trkmuvtx.degreesOfFreedom()));
+    std::vector<reco::TransientTrack> refited=trkmuvtx.refittedTracks();
+    vmu1.SetPtEtaPhiM(refited[0].track().pt(),refited[0].track().eta(),refited[0].track().phi(),0.105);
+    vmu2.SetPtEtaPhiM(refited[1].track().pt(),refited[1].track().eta(),refited[1].track().phi(),0.105);
+    trkmuon_mupt.push_back(vmu1.Pt()); trkmuon_mueta.push_back(vmu1.Eta());
+    trkmuon_muphi.push_back(vmu1.Phi()); trkmuon_trkpt.push_back(vmu2.Pt()); 
+    trkmuon_trketa.push_back(vmu2.Eta()); trkmuon_trkphi.push_back(vmu2.Phi());
+    trkmuon_pt.push_back((vmu1+vmu2).Pt()); trkmuon_eta.push_back((vmu1+vmu2).Eta());
+    trkmuon_phi.push_back((vmu1+vmu2).Phi()); trkmuon_mass.push_back((vmu1+vmu2).M());
+    GlobalPoint Dispbeamspot(-1*((beam_x-trkmuvtx.position().x())+(trkmuvtx.position().z()-beam_z)* theBeamSpot->dxdz()),-1*((beam_y-trkmuvtx.position().y())+ (trkmuvtx.position().z()-beam_z) * theBeamSpot->dydz()), 0);
+    math::XYZVector vperp(Dispbeamspot.x(),Dispbeamspot.y(),0.);
+    math::XYZVector pperp(trkmuvtx.position().x(),trkmuvtx.position().y(),0);
+    float cos(vperp.Dot(pperp)/(vperp.R()*pperp.R()));
+    trkmuon_cos2D.push_back(cos);
+    trkmuon_lxy.push_back(Dispbeamspot.perp());
+    trkmuon_elxy.push_back(TMath::Sqrt(trkmuvtx.positionError().rerr(Dispbeamspot)));
+    trkmuon_muid.push_back(dimuindex[std::distance(dimucands.begin(),mu1)]);
+    trkmuon_trkid.push_back(trkindex[std::distance(trkcands.begin(),trk)]);
+    ntrkmuons++;
+  }
+ }
+}
+if (MuTrkVtx && SkipEvtNoTrkVtx && !MuMuVtx && trkmuon_pt.size()==0 ) return;
+if (MuTrkVtx && MuMuVtx && trkmuon_pt.size()==0 && dimuon_pt.size()==0 && SkipEvtNoTrkVtx && SkipEvtNoMuVtx) return;
+  t1->Fill();
+
+
+}
+
+
+// ------------ method called once each job just before starting event loop  ------------
+template<typename T1>
+void 
+MuonAnalyzer<T1>::beginJob()
+{
+ t1=fs->make<TTree>("mytree","mytree");
+ t1->Branch("event",&event); t1->Branch("run_number",&run_number);
+ t1->Branch("ls",&ls);
+ t1->Branch("pvertex_x",&pvertex_x); t1->Branch("pvertex_y",&pvertex_y);
+ t1->Branch("pvertex_z",&pvertex_z);
+ //gen
+ t1->Branch("genmuon_pt",&genmuon_pt); t1->Branch("genmuon_eta",&genmuon_eta);
+ t1->Branch("genmuon_phi",&genmuon_phi); t1->Branch("genmuon_charge",&genmuon_charge);
+ t1->Branch("genmuon_motmId",&genmuon_momId); t1->Branch("genmuon_grandmomId",&genmuon_grandmomId);
+ t1->Branch("genmuon_grandgrandmomId",&genmuon_grandgrandmomId);
+ //trigger
+ t1->Branch("hltpaths",&hltpaths);  
+ t1->Branch("l1muon_pt",&l1muon_pt); t1->Branch("l1muon_eta",&l1muon_eta);
+ t1->Branch("l1muon_phi",&l1muon_phi);
+ t1->Branch("hltmuon_pt",&hltmuon_pt); t1->Branch("hltmuon_eta",&hltmuon_eta);
+ t1->Branch("hltmuon_phi",&hltmuon_phi); t1->Branch("hltmupn_pathId",&hltmuon_pathId);
+ t1->Branch("hlt_firedMuindex",&hlt_firedMuindex);
+ t1->Branch("hlt_firedMuDr",&hlt_firedMuDr);
+ //reco
+ t1->Branch("nmuons",&nmuons); 
+ t1->Branch("muon_pt",&muon_pt); t1->Branch("muon_eta",&muon_eta);
+ t1->Branch("muon_phi",&muon_phi); t1->Branch("muon_charge",&muon_charge); 
+ t1->Branch("muon_vx",&muon_vx); t1->Branch("muon_vy",&muon_vy);
+ t1->Branch("muon_vz",&muon_vz); t1->Branch("muon_iso",&muon_iso);  
+ t1->Branch("muon_soft",&muon_soft); t1->Branch("muon_loose",&muon_loose);
+ t1->Branch("muon_medium",&muon_medium); t1->Branch("muon_tight",&muon_tight);
+  t1->Branch("muon_highpt",&muon_highpt);
+ t1->Branch("muon_dxy",&muon_dxy); t1->Branch("muon_edxy",&muon_edxy);
+ t1->Branch("muon_dz",&muon_dz); t1->Branch("muon_edz",&muon_edz);
+ t1->Branch("muon_norm_chi2",&muon_norm_chi2);
+ // t1->Branch("muon_dytpt",&muon_dytpt);
+ t1->Branch("muon_innerpt",&muon_innerpt);
+ t1->Branch("muon_globalpt",&muon_globalpt); t1->Branch("muon_tunePpt",&muon_tunePpt);
+ //t1->Branch("muon_pickypt",&muon_pickypt); t1->Branch("muon_tmpfmspt",&muon_tmpfms_pt);
+  t1->Branch("muon_stapt",&muon_sta_pt);
+  // t1->Branch("muon_dyt_norm_chi2",&muon_dyt_norm_chi2); 
+ t1->Branch("muon_inner_norm_chi2",&muon_inner_norm_chi2);
+ t1->Branch("muon_global_norm_chi2",&muon_global_norm_chi2); 
+ t1->Branch("muon_tuneP_norm_chi2",&muon_tuneP_norm_chi2);
+ // t1->Branch("muon_picky_norm_chi2",&muon_pickychi_norm_chi2); 
+ // t1->Branch("muon_tmpfms_norm_chi2",&muon_tmpfms_chi);
+ t1->Branch("muon_sta_norm_chi2",&muon_sta_chi);
+ t1->Branch("muon_mva",&muon_mva); t1->Branch("muon_softmva",&muon_soft_mva);
+ t1->Branch("muon_hcIso",&muon_hcaliso); t1->Branch("muon_trkIso",&muon_track_iso);
+ t1->Branch("muon_ecIso",&muon_ecaliso);
+ // t1->Branch("muon_dytptError",&muon_dytptError);
+ t1->Branch("muon_innerptError",&muon_innerptError);
+ t1->Branch("muon_globalptError",&muon_globalptError); t1->Branch("muon_tunePptError",&muon_tunePptError);
+ //t1->Branch("muon_pickyptError",&muon_pickyptError); t1->Branch("muon_tmpfmsptError",&muon_tmpfms_ptError);
+  t1->Branch("muon_staptError",&muon_sta_ptError);
+  t1->Branch("muon_chambers",&muon_chambers); t1->Branch("muon_chambers_dtcsc",&muon_chambers_dtcsc);
+  t1->Branch("muon_algo",&muon_algo); t1->Branch("muon_validh",&muon_validh);
+  t1->Branch("muon_validh_tune",&muon_validh_tune); t1->Branch("muon_matched_st",&muon_matched_st);
+t1->Branch("muon_expd_matches_st",&muon_expd_matches_st); t1->Branch("muon_st_mask",&muon_st_mask);
+t1->Branch("muon_rpc_layers",&muon_rpc_layers); t1->Branch("muon_dB",&muon_dB);
+t1->Branch("muon_pxlhits",&muon_pxlhits); t1->Branch("muon_trklayers",&muon_trklayers);
+t1->Branch("muon_globalMu",&muon_globalMu); t1->Branch("muon_trackerMu",&muon_trackerMu);
+ //track
+ t1->Branch("ntracks",&ntracks);
+ t1->Branch("track_pt",&track_pt); t1->Branch("track_eta",&track_eta);
+ t1->Branch("track_phi",&track_phi); t1->Branch("track_charge",&track_charge); 
+ t1->Branch("track_vx",&track_vx); t1->Branch("track_vy",&track_vy);
+ t1->Branch("track_vz",&track_vz); t1->Branch("track_dxy",&track_dxy);  
+ t1->Branch("track_edxy",&track_edxy); t1->Branch("track_dz",&track_dz);  
+ t1->Branch("track_edz",&track_edz); t1->Branch("track_trklayers",&track_trklayers);
+ t1->Branch("track_pxllayers",&track_pxllayers); t1->Branch("track_normchi2",&track_normchi2);
+ //dimuon
+ t1->Branch("ndimuons",&ndimuons);
+ t1->Branch("dimuon_pt",&dimuon_pt); t1->Branch("dimuon_eta",&dimuon_eta);
+ t1->Branch("dimuon_phi",&dimuon_phi);  t1->Branch("dimuon_lxy",&dimuon_lxy);
+ t1->Branch("dimuon_elxy",&dimuon_elxy); t1->Branch("dimuon_cos2D",&dimuon_cos2D);
+ t1->Branch("dimuon_x",&dimuon_x); t1->Branch("dimuon_y",&dimuon_y);
+ t1->Branch("dimuon_z",&dimuon_z); t1->Branch("dimuon_prob",&dimuon_prob);
+ t1->Branch("dimuon_mass",&dimuon_mass); t1->Branch("dimuon_mass_unfit",&dimuon_mass_unfit);
+ t1->Branch("dimuon_mu1pt",&dimuon_mu1pt); t1->Branch("dimuon_mu1eta",&dimuon_mu1eta);
+ t1->Branch("dimuon_mu1phi",&dimuon_mu1phi); t1->Branch("dimuon_mu2pt",&dimuon_mu2pt);
+ t1->Branch("dimuon_mu2eta",&dimuon_mu2eta); t1->Branch("dimuon_mu2phi",&dimuon_mu2phi);
+ t1->Branch("dimuon_mu1id",&dimuon_mu1id); t1->Branch("dimuon_mu2id",&dimuon_mu2id);
+ //track muon
+ t1->Branch("ntrkmuons",&ntrkmuons);
+ t1->Branch("trkmuon_pt",&trkmuon_pt); t1->Branch("trkmuon_eta",&trkmuon_eta);
+ t1->Branch("trkmuon_phi",&trkmuon_phi);  t1->Branch("trkmuon_lxy",&trkmuon_lxy);
+ t1->Branch("trkmuon_elxy",&trkmuon_elxy); t1->Branch("trkmuon_cos2D",&trkmuon_cos2D);
+ t1->Branch("trkmuon_x",&trkmuon_x); t1->Branch("trkmuon_y",&trkmuon_y);
+ t1->Branch("trkmuon_z",&trkmuon_z); t1->Branch("trkmuon_prob",&trkmuon_prob);
+ t1->Branch("trkmuon_mass",&trkmuon_mass); t1->Branch("trkmuon_mass_unfit",&trkmuon_mass_unfit);
+ t1->Branch("trkmuon_mupt",&trkmuon_mupt); t1->Branch("trkmuon_mueta",&trkmuon_mueta);
+ t1->Branch("trkmuon_muphi",&trkmuon_muphi); t1->Branch("trkmuon_trkpt",&trkmuon_trkpt);
+ t1->Branch("trkmuon_trketa",&trkmuon_trketa); t1->Branch("trkmuon_trkphi",&trkmuon_trkphi);
+ t1->Branch("trkmuon_muid",&trkmuon_muid); t1->Branch("trkmuon_trkid",&trkmuon_trkid);
+}
+
+// ------------ method called once each job just after ending the event loop  ------------
+template<typename T1>
+void 
+MuonAnalyzer<T1>::endJob() 
+{
+}
+
+// ------------ method fills 'descriptions' with the allowed parameters for the module  ------------
+template<typename T1>
+void
+MuonAnalyzer<T1>::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
+  //The following says we do not know what parameters are allowed so do no validation
+  // Please change this to state exactly what you do use, even if it is no parameters
+  edm::ParameterSetDescription desc;
+  desc.setUnknown();
+  descriptions.addDefault(desc);
+}
+
+
+///////////////////////
+  
+//define this as a plug-in
+typedef MuonAnalyzer<reco::RecoEcalCandidate> MuonAnalyzerb;
+DEFINE_FWK_MODULE(MuonAnalyzerb);
+
