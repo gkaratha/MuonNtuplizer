@@ -1,6 +1,4 @@
-<library name="MuonAnalyzerb" file="MuonAnalyzer.cc">
-</library>
-<library name="MuonAODAnalyzerb" file="MuonAODAnalyzer.cc">
+<library name="MuonAnalyzers" file="*.cc">
 </library>
  <use name="MuonAnalysis/MuonAnalyzer"/>
  <use name="FWCore/Framework"/>
